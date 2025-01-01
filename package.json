@@ -1,6 +1,6 @@
 {
   "name": "node-cluster-ipc",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A lightweight for Inter-Process Communication (IPC) between master and worker processes using the cluster module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
