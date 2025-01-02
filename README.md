@@ -37,7 +37,7 @@ if (cluster.isPrimary) {
 
   ipc.on('message', (channel, data, worker) => {
     console.log(`[Primary] Received message on channel: ${channel}`, data);
-    ipc.send('response', { ack: true }, worker);
+    ipc.send('response', { ack: true }, worker.id);
   });
 
   setTimeout(() => ipc.publish('greeting', { text: 'Hello, Workers!' }), 1000);
@@ -60,13 +60,13 @@ Initializes a new `ClusterIPC` instance and sets up either the primary process o
 const ipc = new ClusterIPC();
 ```
 
-### `.send(channel, data, [targetWorker])`
+### `.send(channel, data, [workerId])`
 
 Sends a message to a worker process.
 
 - `channel`: The channel name for the message.
 - `data`: The data to send.
-- `targetWorker` *(optional)*: If provided, the message will be sent to the specific worker. Otherwise, it will be sent to a worker in round-robin order.
+- `workerId` *(optional)*: If provided, the message will be sent to the specific worker. Otherwise, it will be sent to a worker in round-robin order.
 
 ### `.publish(channel, data)`
 
