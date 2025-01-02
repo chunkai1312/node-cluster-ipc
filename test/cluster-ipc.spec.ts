@@ -19,7 +19,7 @@ describe('ClusterIPC', () => {
     mockWorker = new EventEmitter() as Worker & EventEmitter;
     mockWorker.send = jest.fn();
     // @ts-ignore
-    mockWorker.id = 'mockWorker1';
+    mockWorker.id = 1;
     consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     (cluster.on as jest.Mock).mockImplementation((event: string, callback: Function) => {
       if (event === 'fork') callback(mockWorker);
@@ -36,7 +36,7 @@ describe('ClusterIPC', () => {
       (cluster as any).isPrimary = true;
       (cluster as any).isMaster = true;
       (cluster as any).isWorker = false;
-      (cluster as any).workers = { mockWorker1: mockWorker };
+      (cluster as any).workers = { '1': mockWorker };
       clusterIPC = new ClusterIPC();
     });
 
@@ -56,15 +56,29 @@ describe('ClusterIPC', () => {
       expect(messageHandler).toHaveBeenCalledWith(testChannel, testData, mockWorker);
     });
 
-    it('should send message to specific worker', () => {
+    it('should send message to specific worker with id', () => {
       const testChannel = 'test';
       const testData = { foo: 'bar' };
-      clusterIPC.send(testChannel, testData, mockWorker);
+      clusterIPC.send(testChannel, testData, 1);
 
       expect(mockWorker.send).toHaveBeenCalledWith({
         channel: testChannel,
         data: testData,
       });
+    });
+
+    it('should send message to specific worker with custom key', () => {
+      const testChannel = 'test';
+      const testData = { foo: 'bar' };
+      clusterIPC.send(testChannel, testData, 'foo');
+
+      expect(mockWorker.send).toHaveBeenCalledWith({
+        channel: testChannel,
+        data: testData,
+      });
+
+      clusterIPC.send(testChannel, testData, 'foo');
+      expect(mockWorker.send).toHaveBeenCalledTimes(2);
     });
 
     it('should send message to a worker when no target specified', () => {
@@ -132,7 +146,6 @@ describe('ClusterIPC', () => {
 
       expect(messageHandler).toHaveBeenCalledWith(testChannel, testData);
     });
-
 
     it('should send message to primary', () => {
       const testChannel = 'test';
