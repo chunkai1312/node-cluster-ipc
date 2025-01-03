@@ -124,15 +124,15 @@ ipc.on('request', (channel, data, reply) => {
 
 ## API
 
-### `new ClusterIPC([options])`
+### `new ClusterIpc([options])`
 
-Initializes a new `ClusterIPC` instance and sets up either the primary process or the worker process based on the current process type.
+Initializes a new `ClusterIpc` instance and sets up either the primary process or the worker process based on the current process type.
 
 - `options`: Configuration options (optional).
   - `requestTimeout`: Timeout for requests in milliseconds (default: `5000`).
 
 ```js
-const ipc = new ClusterIPC();
+const ipc = new ClusterIpc();
 ```
 
 ### `.send(channel, data, [workerId])`
