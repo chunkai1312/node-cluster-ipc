@@ -4,14 +4,14 @@
 [![Build Status][action-image]][action-url]
 [![Coverage Status][codecov-image]][codecov-url]
 
-`node-cluster-ipc` is a lightweight Node.js package that simplifies Inter-Process Communication (IPC) for applications using the cluster module. It enables the master process to communicate with worker processes, supporting both targeted messages and broadcasting to all workers.
+`node-cluster-ipc` is a lightweight Node.js package that simplifies Inter-Process Communication (IPC) for applications using the cluster module. It facilitates message sending, publishing, and requesting between the primary process and worker processes. It also supports request timeout handling and automatic worker selection.
 
 ## Features
 
-- **Primary Process Messaging**: Enables the primary process to send messages to specific worker processes or broadcast messages to all workers.
-- **Worker Process Interaction**: Allows worker processes to send messages back to the primary process, enabling two-way communication.
-- **Round-robin Message Distribution**: When no specific worker is targeted, the primary process distributes messages to workers in a round-robin manner.
-- **Event-driven Messaging**: Utilizes the `EventEmitter` API to handle messages, making it easier to listen for and respond to IPC events.
+- Send messages between the primary process and worker processes.
+- Publish messages to all available workers from the primary process.
+- Support for the Request-Reply pattern with timeout handling.
+- Event-driven with support for `message` and `request` events.
 
 ## Installation
 
@@ -21,40 +21,115 @@ To install `node-cluster-ipc`, run the following command:
 $ npm install --save node-cluster-ipc
 ```
 
-## Usage
+## Quick Start
 
 Here’s a quick example demonstrating how to use `node-cluster-ipc`:
 
 ```js
-const { ClusterIPC } = require('node-cluster-ipc');
 const cluster = require('cluster');
+const { ClusterIpc } = require('node-cluster-ipc');
 
-const ipc = new ClusterIPC();
+const ipc = new ClusterIpc();
 
 if (cluster.isPrimary) {
   cluster.fork();
   cluster.fork();
 
-  ipc.on('message', (channel, data, worker) => {
-    console.log(`[Primary] Received message on channel: ${channel}`, data);
-    ipc.send('response', { ack: true }, worker.id);
+  ipc.publish('hello-channel', 'Hello, worker!');
+
+  ipc.request('compute-channel', 42)
+    .then(response => {
+      console.log('[Primary] Worker response:', response);
+    })
+    .catch(err => {
+      console.error('[Primary] Error:', err);
+    });
+
+  ipc.on('message', (channel, data) => {
+    console.log(`[Primary] Received message on ${channel}:`, data);
   });
 
-  setTimeout(() => ipc.publish('greeting', { text: 'Hello, Workers!' }), 1000);
+  ipc.on('request', (channel, data, reply) => {
+    console.log(`[Primary] Received request on ${channel}:`, data);
+    reply(data * 2);
+  });
 } else {
   ipc.on('message', (channel, data) => {
-    console.log(`[Worker] Received message on channel: ${channel}`, data);
+    console.log(`[Worker] Received message on ${channel}:`, data);
   });
 
-  ipc.send('status', { workerId: process.pid, status: 'Ready' });
+  ipc.on('request', (channel, data, reply) => {
+    console.log(`[Worker] Received request on ${channel}:`, data);
+    reply(data * 2);
+  });
 }
+```
+
+## Usage
+
+### Setup `ClusterIpc`
+
+First, instantiate the `ClusterIpc` class in your primary and worker processes. The constructor accepts an optional `ClusterIpcOptions` parameter for customizing the request timeout.
+
+```javascript
+import { ClusterIpc } from 'cluster-ipc';
+
+const ipc = new ClusterIpc({
+  requestTimeout: 5000 // Optional, in milliseconds
+});
+```
+
+### Send Message to Worker
+
+You can send a message to a specific worker by providing the `channel` and `data`. Optionally, specify the `workerId` to target a specific worker.
+
+```javascript
+ipc.send('channel-name', { key: 'value' }, workerId);
+```
+
+### Publish Message to All Workers
+
+Only the primary process can call `publish`. This will send a message to all available workers.
+
+```javascript
+ipc.publish('channel-name', { key: 'value' });
+```
+
+### Request/Reply between Processes
+
+You can make requests to workers with `request()`. It returns a `Promise` and handles the timeout automatically.
+
+```javascript
+ipc.request('channel-name', { key: 'value' }).then(response => {
+  console.log('Response:', response);
+}).catch(error => {
+  console.error('Error:', error);
+});
+```
+
+### Handling Messages and Requests
+
+You can listen for messages and requests from workers using the `message` and `request` events. In case of a request, you can provide a response using the callback function.
+
+```javascript
+ipc.on('message', (channel, data) => {
+  console.log(`Received message on ${channel}:`, data);
+});
+
+ipc.on('request', (channel, data, reply) => {
+  console.log(`Received request on ${channel}:`, data);
+  reply({ responseKey: 'responseValue' });
+});
 ```
 
 ## API
 
-### `new ClusterIPC()`
+### `new ClusterIPC([options])`
 
 Initializes a new `ClusterIPC` instance and sets up either the primary process or the worker process based on the current process type.
+
+- `options`: Configuration options (optional).
+  - `requestTimeout`: Timeout for requests in milliseconds (default: `5000`).
 
 ```js
 const ipc = new ClusterIPC();
@@ -75,6 +150,16 @@ Publishes a message to all active workers (only available in the primary process
 - `channel`: The channel name for the message.
 - `data`: The data to publish.
 
+### `.request(channel, data, [workerId])`
+
+Sends a request to a worker process.
+
+- `channel`: The channel name for the request.
+- `data`: The data to send.
+- `workerId` *(optional)*: If provided, the request will be sent to the specific worker. Otherwise, it will be sent to a worker in round-robin order.
+
+Returns `Promise` for the response.
+
 ### `.isPrimary`
 
 Returns `true` if the process is the primary, otherwise `false`.
@@ -93,11 +178,18 @@ Returns an object containing all active worker processes (only available in the 
 
 ### Event: `'message'`
 
-Emitted when a message is received from a worker process or the primary process. Listeners can handle messages by channel.
+Listen for messages received by the current process.
 
 - `channel`: The channel of the received message.
 - `data`: The data sent by the worker (primary).
-- `worker` *(optional)*: The worker that sent the message (available when receiving from primary).
+
+### Event: `'request'`
+
+Listen for requests received by the current process and send a response using `reply()`.
+
+- `channel`: The channel of the received message.
+- `data`: The data sent by the worker (primary).
+- `reply`: Callback to send a response.
 
 ## Changelog
 
