@@ -1,16 +1,28 @@
 import cluster, { Worker } from 'cluster';
+import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
-interface IPCMessage {
+interface IpcMessage {
   channel: string;
   data: any;
+  requestId?: string;
+  isReply?: boolean;
 }
 
-export class ClusterIPC extends EventEmitter {
+interface ClusterIpcOptions {
+  requestTimeout?: number;
+}
+
+export class ClusterIpc extends EventEmitter {
   private workerIndex = 0;
   private workerMap: Map<string, number> = new Map();
+  private pendingRequests: Map<string, {
+    resolve: (value: any) => void;
+    reject: (reason?: any) => void;
+    timeout: NodeJS.Timeout;
+  }> = new Map();
 
-  constructor() {
+  constructor(private options: ClusterIpcOptions = { requestTimeout: 5000 }) {
     super();
     this.isPrimary ? this.setupPrimary() : this.setupWorker();
   }
@@ -31,16 +43,10 @@ export class ClusterIPC extends EventEmitter {
     return cluster.workers;
   }
 
-  send(channel: string, data: any, workerId?: number | string) {
-    const message: IPCMessage = { channel, data };
-
-    if (this.isPrimary) {
-      const worker = this.getWorker(workerId);
-      if (worker) worker.send(message);
-    } else {
-      const worker = this.worker as Worker;
-      worker.send(message);
-    }
+  send(channel: string, data: any, workerId?: number | string): void {
+    const message: IpcMessage = { channel, data };
+    const worker = this.isPrimary ? this.getWorker(workerId) : this.worker;
+    if (worker) worker.send(message);
   }
 
   publish(channel: string, data: any) {
@@ -48,37 +54,81 @@ export class ClusterIPC extends EventEmitter {
       throw new Error('Method "publish" can only be called from the primary process');
     }
 
-    const message: IPCMessage = { channel, data };
+    const message: IpcMessage = { channel, data };
     const workers = Object.values(this.workers || {}) as Worker[];
 
     if (workers.length) {
       workers.forEach(worker => worker.send(message));
     } else {
-      console.warn('[ClusterIPC] No workers available to publish the message');
+      throw new Error('No workers available');
     }
   }
 
-  private setupPrimary() {
+  async request(channel: string, data: any, workerId?: number | string): Promise<any> {
+    const requestId = randomUUID();
+    const message: IpcMessage = { channel, data, requestId };
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const request = this.pendingRequests.get(requestId);
+        if (request) {
+          this.pendingRequests.delete(requestId);
+          reject(new Error('Request timeout'));
+        }
+      }, this.options.requestTimeout);
+
+      this.pendingRequests.set(requestId, { resolve, reject, timeout });
+
+      try {
+        const worker = this.isPrimary ? this.getWorker(workerId) : this.worker;
+        if (worker) worker.send(message);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pendingRequests.delete(requestId);
+        reject(error);
+      }
+    });
+  }
+
+  private reply(channel: string, data: any, requestId: string, workerId?: number | string): void {
+    const message: IpcMessage = { channel, data, requestId, isReply: true };
+    const worker = this.isPrimary ? this.getWorker(workerId) : this.worker;
+    if (worker) worker.send(message);
+  }
+
+  private setupPrimary(): void {
     cluster.on('online', (worker) => {
-      worker.on('message', (msg: IPCMessage) => {
-        this.emit('message', msg.channel, msg.data, worker);
-      });
+      worker.on('message', (msg: IpcMessage) => this.handleMessage(msg, worker));
     });
   }
 
-  private setupWorker() {
+  private setupWorker(): void {
     const worker = this.worker as Worker;
-    worker.on('message', (msg: IPCMessage) => {
-      if (msg) this.emit('message', msg.channel, msg.data);
-    });
+    worker.on('message', (msg: IpcMessage) => this.handleMessage(msg, worker));
   }
 
-  private getWorker(id?: number | string) {
+  private handleMessage(msg: IpcMessage, worker: Worker): void {
+    if (msg.isReply && msg.requestId) {
+      const request = this.pendingRequests.get(msg.requestId);
+      if (request) {
+        clearTimeout(request.timeout);
+        this.pendingRequests.delete(msg.requestId);
+        request.resolve(msg.data);
+      }
+    } else if (msg.requestId) {
+      this.emit('request', msg.channel, msg.data, (response: any) => {
+        this.reply(msg.channel, response, msg.requestId!, worker.id);
+      });
+    } else {
+      this.emit('message', msg.channel, msg.data);
+    }
+  }
+
+  private getWorker(id?: number | string): Worker | undefined {
     const workers = Object.values(this.workers || {}) as Worker[];
 
     if (workers.length === 0) {
-      console.warn('[ClusterIPC] No workers available to send the message');
-      return;
+      throw new Error('No workers available')
     }
 
     if (id !== undefined) {
